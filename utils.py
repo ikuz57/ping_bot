@@ -4,7 +4,6 @@ from aiogram import types
 import asyncio
 from contextlib import contextmanager
 from pythonping import ping
-from data_classes import Objects, Devices, Favorites
 
 
 TEMP_STATUS = {}
@@ -24,10 +23,6 @@ async def update_status():
         TEMP_STATUS.clear()
         with conn_context(db_path) as conn:
             curs = conn.cursor()
-            # curs.execute('''
-            # SELECT D.id, D.name, D.ip, O.name as object_name
-            # FROM devices as D
-            # JOIN objects as O ON O.id = D.id_object''')
             try:
                 curs.execute('''
                 SELECT *
@@ -47,7 +42,6 @@ async def update_status():
                 for device in all_devices:
                     device_response = ping(device['ip'], size=32, count=4)
                     temp = []
-                    # temp.append('id='+str(device['id']))
                     temp.append(device['name'])
                     if device_response.stats_packets_returned <= 1:
                         temp.append('\U0001F534')  # DOWN
@@ -140,6 +134,7 @@ async def show_status(message: types.Message):
         LEFT JOIN objects as o ON o.id = f.id_object
         WHERE f.id_chat = {id_chat}''')
         fav_objects = curs.fetchall()
+    logging.info(fav_objects)
     msg = ''
     status = ''
     for object in fav_objects:
@@ -154,15 +149,52 @@ async def show_status(message: types.Message):
     await message.answer(msg)
 
 
-async def ping_devices(args: str, message: types.Message):
-    name = args
+async def add_remove_track(message: types.Message):
+    id_chat = message.chat.id
     with conn_context(db_path) as conn:
         curs = conn.cursor()
-        curs.execute(f'''SELECT ip FROM devices WHERE name='{name}';''')
-        device_ip = curs.fetchone()['ip']
-        response_list = ping(device_ip, size=32, count=4)
-        await message.answer(
-            f'Среднее время отклика {response_list.rtt_avg_ms} мсек')
+        curs.execute(f'''
+        SELECT id_chat, track
+        FROM track
+        WHERE id_chat = {id_chat}''')
+        chat_track = curs.fetchall()
+        logging.info('-----------------------')
+        logging.info(len(chat_track))
+        logging.info('-----------------------')
+        # logging.info(chat_track[0]['track'])
+        if len(chat_track) == 0:
+            curs.execute(f'''
+            INSERT INTO track (id_chat, track)
+            VALUES ('{id_chat}', 1);''')
+            conn.commit()
+            await message.answer('Я уведомлю вас, если что-то случится...')
+        else:
+            if chat_track[0]['track'] == 1:
+                curs.execute(f'''
+                UPDATE track
+                SET track= 0
+                WHERE id_chat='{id_chat}';''')
+                conn.commit()
+                await message.answer('Вы отключили уведомления...')
+            else:
+                curs.execute(f'''
+                UPDATE track
+                SET track = 1
+                WHERE id_chat='{id_chat}';''')
+                conn.commit()
+                await message.answer('Я уведомлю Вас, если что-то случится...')
+
+
+
+# async def ping_devices(args: str, message: types.Message):
+#     name = args
+#     with conn_context(db_path) as conn:
+#         curs = conn.cursor()
+#         curs.execute(f'''SELECT ip FROM devices WHERE name='{name}';''')
+#         device_ip = curs.fetchone()['ip']
+#         response_list = ping(device_ip, size=32, count=4)
+#         await message.answer(
+#             f'Среднее время отклика {response_list.rtt_avg_ms} мсек')
 
 
 async def get_list_of_devices(message: types.Message):

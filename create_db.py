@@ -21,6 +21,11 @@ with conn_context(db_path) as conn:
         id_object INTEGER,
         CONSTRAINT favorites_id_chat_id_object_uq UNIQUE(id_chat, id_object),
         FOREIGN KEY (id_object) REFERENCES objects (id));
+
+        CREATE TABLE IF NOT EXISTS Track(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_chat TEXT,
+        track INT);
         '''
     )
     # curs.execute(
