@@ -1,12 +1,15 @@
 import logging
 import sqlite3
 from aiogram import types
+import asyncio
 from contextlib import contextmanager
 from pythonping import ping
 from data_classes import Objects, Devices, Favorites
 
-TEMP_STATUS = []
+
+TEMP_STATUS = {}
 db_path = 'device_object.db'
+
 
 @contextmanager
 def conn_context(db_path: str):
@@ -17,25 +20,45 @@ def conn_context(db_path: str):
 
 
 async def update_status():
-    with conn_context(db_path) as conn:
-        curs = conn.cursor()
-        curs.execute('''
-        SELECT D.id, D.name, D.ip, O.name as object_name
-        FROM devices as D
-        JOIN objects as O ON O.id = D.id_object''')
-        all_devices = curs.fetchall()
-        for device in all_devices:
-            device_response = ping(device['ip'], size=32, count=4)
-            temp = []
-            temp.append(device['id'])
-            temp.append(device['name'])
-            if device_response.stats_packets_returned <= 1:
-                temp.append('DOWN')
-            else:
-                temp.append('UP')
-                temp.append(device_response.rtt_avg_ms)
-            temp.append(device['object_name'])
-            TEMP_STATUS.append(temp)
+    while True:
+        TEMP_STATUS.clear()
+        with conn_context(db_path) as conn:
+            curs = conn.cursor()
+            # curs.execute('''
+            # SELECT D.id, D.name, D.ip, O.name as object_name
+            # FROM devices as D
+            # JOIN objects as O ON O.id = D.id_object''')
+            try:
+                curs.execute('''
+                SELECT *
+                FROM Objects
+                ''')
+            except sqlite3.OperationalError:
+                continue
+            all_objects = curs.fetchall()
+            for object in all_objects:
+                temp_object_devices = []
+                curs.execute(f'''
+                    SELECT id, name, ip, id_object
+                    FROM devices
+                    WHERE id_object='{object['id']}'
+                    ''')
+                all_devices = curs.fetchall()
+                for device in all_devices:
+                    device_response = ping(device['ip'], size=32, count=4)
+                    temp = []
+                    # temp.append('id='+str(device['id']))
+                    temp.append(device['name'])
+                    if device_response.stats_packets_returned <= 1:
+                        temp.append('\U0001F534')  # DOWN
+                    else:
+                        temp.append('\U0001F7E2')
+                        temp.append(str(device_response.rtt_avg_ms) + ' мс')
+                    temp_object_devices.append(temp)
+                TEMP_STATUS[object['name']] = temp_object_devices
+        logging.info('UPDATE')
+        logging.info(TEMP_STATUS)
+        await asyncio.sleep(10)
 
 
 async def add_object(args: str, message: types.Message):
@@ -88,12 +111,46 @@ async def add_to_fav(args: str, message: types.Message):
             await message.reply(f'{object_name} добавлен в избранное!')
 
 
-async def show_status(message: types.Message):
-    # id_chat = message.chat.id
+async def show_status_detail(message: types.Message):
+    id_chat = message.chat.id
+    with conn_context(db_path) as conn:
+        curs = conn.cursor()
+        curs.execute(f'''
+        SELECT o.name as name
+        FROM favorites as f
+        LEFT JOIN objects as o ON o.id = f.id_object
+        WHERE f.id_chat = {id_chat}''')
+        fav_objects = curs.fetchall()
     msg = ''
-    for device in TEMP_STATUS:
-        msg += ' '.join(map(str, device))
-        msg += '\n'
+    for object in fav_objects:
+        msg += object['name'] + ':\n'
+        for device in TEMP_STATUS[object['name']]:
+            msg += ' '.join(str(param) for param in device)
+            msg += '\n'
+    await message.answer(msg)
+
+
+async def show_status(message: types.Message):
+    id_chat = message.chat.id
+    with conn_context(db_path) as conn:
+        curs = conn.cursor()
+        curs.execute(f'''
+        SELECT o.name as name
+        FROM favorites as f
+        LEFT JOIN objects as o ON o.id = f.id_object
+        WHERE f.id_chat = {id_chat}''')
+        fav_objects = curs.fetchall()
+    msg = ''
+    status = ''
+    for object in fav_objects:
+        msg += object['name'] + ': '
+        for device in TEMP_STATUS[object['name']]:
+            if device[1] == '\U0001F7E2':
+                status = '\U0001F7E2'
+            else:
+                status = '\U0001F534'
+                break
+        msg += status + '\n'
     await message.answer(msg)
 
 
@@ -138,49 +195,6 @@ async def get_list_of_objects(message: types.Message):
             unpack_row = f'id:{id}, name:{name}\n'
             all_objects_list += unpack_row
         await message.answer(all_objects_list)
-
-
-# async def show_fav_status(message: types.Message):
-#     id_chat = message.chat.id
-#     with conn_context(db_path) as conn:
-#         curs = conn.cursor()
-#         curs.execute(f'''SELECT * FROM favorites WHERE id_chat='{id_chat}';''')
-#         all_obj_fav = curs.fetchall()
-#         all_devices = []
-#         for obj in all_obj_fav:
-#             curs.execute(
-#                 f'''SELECT * FROM devices WHERE '''
-#                 f'''id_object='{obj['id_object']}';''')
-#             devices_object = curs.fetchall()
-#             for device in devices_object:
-#                 id, name, ip, id_object = tuple(device)
-#                 curs.execute(
-#                     f'''SELECT name FROM objects WHERE '''
-#                     f'''id='{obj[id_object]}';''')
-#                 current_object = curs.fetchone()
-#                 all_devices.append([id, name, ip, current_object])
-#         status = ''
-#         for device in all_devices:
-#             response_list = ping(device[2], size=32, count=4)
-#             status += (f'id:{device[0]}, name:{device[1]}, ip:{device[2]}, '
-#                        f'object:{device[3]}, время отклик - '
-#                        f'{response_list.rtt_avg_ms} мсек\n')
-#         await message.answer(status)
-
-
-# async def get_list_fav_obj(id_chat: str):
-#     with conn_context(db_path) as conn:
-#         curs = conn.cursor()
-#         curs.execute(f'''SELECT id_object FROM favorites WHERE id_chat='{id_chat}';''')
-#         all_objects_for_this_chat = curs.fetchall()
-#         all_devices_list = ''
-#         for objects in all_objects_for_this_chat:
-#             curs.execute(f'''SELECT  FROM favorites WHERE id_chat='{id_chat}';''')
-#             unpack_row = ''
-#             id, name = tuple(row)
-#             unpack_row = f'id:{id}, name:{name}\n'
-#             all_objects_list += unpack_row
-#         await message.answer(all_objects_list)
 
 
 async def get_list_objects():

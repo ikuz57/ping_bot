@@ -19,7 +19,7 @@ with conn_context(db_path) as conn:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         id_chat TEXT,
         id_object INTEGER,
-        CONSTRAINT favorites_chat_id_id_object_uq UNIQUE(chat_id, id_object),
+        CONSTRAINT favorites_id_chat_id_object_uq UNIQUE(id_chat, id_object),
         FOREIGN KEY (id_object) REFERENCES objects (id));
         '''
     )

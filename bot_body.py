@@ -12,7 +12,7 @@ bot = Bot(token=config.bot_token.get_secret_value())
 
 
 async def main():
-    await update_status()
+    asyncio.ensure_future(update_status())
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
