@@ -28,13 +28,3 @@ with conn_context(db_path) as conn:
         track INT);
         '''
     )
-    # curs.execute(
-    #     '''CREATE TABLE IF NOT EXISTS StatusDevices(
-    #     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    #     id_device TEXT UNIQUE,
-    #     status text,
-    #     ping int,
-    #     CONSTRAINT favorites_chat_id_id_object_uq UNIQUE(chat_id, id_object),
-    #     FOREIGN KEY (id_devices) REFERENCES devices (id));
-    #     '''
-    # )
