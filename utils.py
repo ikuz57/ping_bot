@@ -1,10 +1,10 @@
+import asyncio
 import logging
 import sqlite3
-from aiogram import types, Bot
-import asyncio
 from contextlib import contextmanager
-from pythonping import ping
 
+from aiogram import Bot, types
+from pythonping import ping
 
 TEMP_STATUS = {}
 TEMP_TRACK = {}
@@ -13,14 +13,14 @@ db_path = 'device_object.db'
 
 
 @contextmanager
-def conn_context(db_path: str):
+def conn_context(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     yield conn
     conn.close()
 
 
-async def update_status(bot: Bot):
+async def update_status(bot: Bot) -> None:
     while True:
         TEMP_STATUS.clear()
         TEMP_TRACK.clear()
@@ -36,57 +36,55 @@ async def update_status(bot: Bot):
                 continue
             all_objects = curs.fetchall()
             for object in all_objects:
-                temp_object_devices = []
                 curs.execute(f'''
                     SELECT id, name, ip, id_object
                     FROM devices
                     WHERE id_object='{object['id']}'
                     ''')
                 all_devices = curs.fetchall()
-                msg = ''
-                for device in all_devices:
-                    device_response = ping(device['ip'], size=32, count=4)
-                    temp = []
-                    temp.append(device['name'])
-                    if device_response.stats_packets_returned == 0:
-                        temp.append('\U0001F7E5')  # DOWN
-                        try:
-                            for chat_id in TEMP_TRACK[object['name']]:
-                                if device['name'] not in TEMP_SND_ERROR:
-                                    msg = (
-                                        'Отсутствует соединение \n' +
-                                        f"{object['name']}: {device['name']}" +
-                                        ' \U0001F440\n')
-                                    TEMP_SND_ERROR[device['name']] = [chat_id]
-                                    await bot.send_message(chat_id, msg)
-                        except KeyError:
-                            logging.info('Нет отслеживаемых обьектов')
-                    else:
-                        try:
-                            if device['name'] in TEMP_SND_ERROR:
-                                for chat_id in TEMP_SND_ERROR[device['name']]:
-                                    msg = (
-                                        "Восстановление соединения с " +
-                                        f"{object['name']}: {device['name']}" +
-                                        ' \U0001F44D')
-                                    await bot.send_message(chat_id, msg)
-                                TEMP_SND_ERROR.pop(device['name'])
-                            temp.append('\U0001F7E9')
-                            temp.append(
-                                str(device_response.rtt_avg_ms) + ' мс')
-                        except KeyError:
-                            logging.info('Нет отслеживаемых обьектов')
-                    temp_object_devices.append(temp)
+                temp_object_devices = status_check(all_devices, bot, object)
                 TEMP_STATUS[object['name']] = temp_object_devices
         logging.info('UPDATE')
-        logging.info(TEMP_STATUS)
-        logging.info('--------------------')
-        logging.info(TEMP_SND_ERROR)
-        logging.info('--------------------')
         await asyncio.sleep(10)
 
 
-async def get_all_fav_objects(curs: sqlite3.Cursor) -> list:
+async def status_check(devices: list, bot: Bot, object: sqlite3.Row) -> list:
+    msg = ''
+    temp_object_devices = []
+    for device in devices:
+        device_response = ping(device['ip'], size=32, count=4)
+        temp = []
+        temp.append(device['name'])
+        try:
+            if device_response.stats_packets_returned == 0:
+                temp.append('\U0001F7E5')  # DOWN
+                for chat_id in TEMP_TRACK[object['name']]:
+                    if device['name'] not in TEMP_SND_ERROR:
+                        msg = (
+                            'Отсутствует соединение \n' +
+                            f"{object['name']}: {device['name']}" +
+                            ' \U0001F440\n')
+                        TEMP_SND_ERROR[device['name']] = [chat_id]
+                        await bot.send_message(chat_id, msg)
+            else:
+                if device['name'] in TEMP_SND_ERROR:
+                    for chat_id in TEMP_SND_ERROR[device['name']]:
+                        msg = (
+                            "Восстановление соединения с " +
+                            f"{object['name']}: {device['name']}" +
+                            ' \U0001F44D')
+                        await bot.send_message(chat_id, msg)
+                    TEMP_SND_ERROR.pop(device['name'])
+                    temp.append('\U0001F7E9')
+                    temp.append(
+                        str(device_response.rtt_avg_ms) + ' мс')
+        except KeyError:
+            await bot.send_message(chat_id, 'Нет отслеживаемых обьектов!')
+        temp_object_devices.append(temp)
+    yield temp_object_devices
+
+
+async def get_all_fav_objects(curs: sqlite3.Cursor):
     curs.execute('''
         SELECT id_chat
         FROM track
@@ -257,44 +255,3 @@ async def get_list_of_objects(message: types.Message):
             unpack_row = f'\U0001F539 {name}, ID - {id}, \n'
             all_objects_list += unpack_row
         await message.answer(all_objects_list)
-
-
-# async def ping_devices(args: str, message: types.Message):
-#     name = args
-#     with conn_context(db_path) as conn:
-#         curs = conn.cursor()
-#         curs.execute(f'''SELECT ip FROM devices WHERE name='{name}';''')
-#         device_ip = curs.fetchone()['ip']
-#         response_list = ping(device_ip, size=32, count=4)
-#         await message.answer(
-#             f'Среднее время отклика {response_list.rtt_avg_ms} мсек')
-
-
-# async def get_list_of_devices(message: types.Message):
-#     with conn_context(db_path) as conn:
-#         curs = conn.cursor()
-#         curs.execute('''SELECT * FROM devices;''')
-#         rows = curs.fetchall()
-#         all_devices_list = ''
-#         curs.execute('''SELECT * FROM objects;''')
-#         for row in rows:
-#             unpack_row = ''
-#             id, name, ip, id_object = tuple(row)
-#             curs.execute(
-#                 f'''SELECT object FROM objects WHERE id='{id_object}';''')
-#             object = curs.fetchone()['name']
-#             unpack_row = f'id:{id}, name:{name}, ip:{ip}, object:{object}\n'
-#             all_devices_list += unpack_row
-#         await message.answer(all_devices_list)
-
-
-# async def get_list_objects():
-#     pass
-
-
-# async def get_list_device():
-#     pass
-
-
-# async def ping_all(ip: str):
-#     pass
