@@ -36,13 +36,10 @@ async def update_status(bot: Bot) -> None:
                 continue
             all_objects = curs.fetchall()
             for object in all_objects:
-                curs.execute(f'''
-                    SELECT id, name, ip, id_object
-                    FROM devices
-                    WHERE id_object='{object['id']}'
-                    ''')
-                all_devices = curs.fetchall()
-                temp_object_devices = status_check(all_devices, bot, object)
+                all_devices = await get_object_devices(object, curs)
+                # if len(devices) != 0:
+                temp_object_devices = await status_check(
+                    all_devices, bot, object)
                 TEMP_STATUS[object['name']] = temp_object_devices
         logging.info('UPDATE')
         await asyncio.sleep(10)
@@ -75,16 +72,16 @@ async def status_check(devices: list, bot: Bot, object: sqlite3.Row) -> list:
                             ' \U0001F44D')
                         await bot.send_message(chat_id, msg)
                     TEMP_SND_ERROR.pop(device['name'])
-                    temp.append('\U0001F7E9')
-                    temp.append(
-                        str(device_response.rtt_avg_ms) + ' мс')
+                temp.append('\U0001F7E9')
+                temp.append(
+                    str(device_response.rtt_avg_ms) + ' мс')
         except KeyError:
-            await bot.send_message(chat_id, 'Нет отслеживаемых обьектов!')
+            logging.info('Нет отслеживаемых обьектов!')
         temp_object_devices.append(temp)
-    yield temp_object_devices
+    return temp_object_devices
 
 
-async def get_all_fav_objects(curs: sqlite3.Cursor):
+async def get_all_fav_objects(curs: sqlite3.Cursor) -> None:
     curs.execute('''
         SELECT id_chat
         FROM track
@@ -107,7 +104,7 @@ async def get_all_fav_objects(curs: sqlite3.Cursor):
             TEMP_TRACK[object['name']] = [object['id_chat']]
 
 
-async def add_object(args: str, message: types.Message):
+async def add_object(args: str, message: types.Message) -> None:
     with conn_context(db_path) as conn:
         try:
             curs = conn.cursor()
@@ -120,7 +117,7 @@ async def add_object(args: str, message: types.Message):
             await message.reply('Объект успешно добавлен!')
 
 
-async def add_device(args: str, message: types.Message):
+async def add_device(args: str, message: types.Message) -> None:
     with conn_context(db_path) as conn:
         try:
             curs = conn.cursor()
@@ -140,7 +137,7 @@ async def add_device(args: str, message: types.Message):
             await message.reply('Устройство успешно добавлено!')
 
 
-async def add_to_fav(args: str, message: types.Message):
+async def add_to_fav(args: str, message: types.Message) -> None:
     id_chat = message.chat.id
     object_name = ''
     with conn_context(db_path) as conn:
@@ -159,7 +156,7 @@ async def add_to_fav(args: str, message: types.Message):
             await message.reply(f'{object_name} добавлен в избранное!')
 
 
-async def show_status_detail(message: types.Message):
+async def show_status_detail(message: types.Message) -> None:
     id_chat = message.chat.id
     with conn_context(db_path) as conn:
         curs = conn.cursor()
@@ -175,14 +172,17 @@ async def show_status_detail(message: types.Message):
         msg = ''
         for object in fav_objects:
             msg += '\U0001F539 ' + object['name'] + ':\n'
-            for device in TEMP_STATUS[object['name']]:
-                msg += '\U00002796 '
-                msg += ' '.join(str(param) for param in device)
-                msg += '\n'
+            try:
+                for device in TEMP_STATUS[object['name']]:
+                    msg += '\U00002796 '
+                    msg += ' '.join(str(param) for param in device)
+                    msg += '\n'
+            except KeyError:
+                logging.info("Object hasn't devices")
         await message.answer(msg)
 
 
-async def show_status(message: types.Message):
+async def show_status(message: types.Message) -> None:
     id_chat = message.chat.id
     with conn_context(db_path) as conn:
         curs = conn.cursor()
@@ -198,18 +198,21 @@ async def show_status(message: types.Message):
         await message.answer('Нет избранных объектов!')
     else:
         for object in fav_objects:
-            msg += '\U0001F539 ' + object['name'] + ' '
-            for device in TEMP_STATUS[object['name']]:
-                if device[1] == '\U0001F7E9':
-                    status = '\U0001F7E9'
-                else:
-                    status = '\U0001F7E5'
-                    break
-            msg += status + '\n'
+            try:
+                msg += '\U0001F539 ' + object['name'] + ' '
+                for device in TEMP_STATUS[object['name']]:
+                    if device[1] == '\U0001F7E9':
+                        status = '\U0001F7E9'
+                    else:
+                        status = '\U0001F7E5'
+                        break
+                msg += status + '\n'
+            except KeyError:
+                logging.info('')
         await message.answer(msg)
 
 
-async def add_remove_track(message: types.Message):
+async def add_remove_track(message: types.Message) -> None:
     id_chat = message.chat.id
     with conn_context(db_path) as conn:
         curs = conn.cursor()
@@ -243,15 +246,100 @@ async def add_remove_track(message: types.Message):
                 await message.answer('Я уведомлю Вас, если что-то случится!')
 
 
-async def get_list_of_objects(message: types.Message):
+async def get_list_of_objects() -> list[sqlite3.Row]:
     with conn_context(db_path) as conn:
         curs = conn.cursor()
         curs.execute('''SELECT * FROM objects;''')
         rows = curs.fetchall()
-        all_objects_list = ''
-        for row in rows:
-            unpack_row = ''
-            id, name = tuple(row)
-            unpack_row = f'\U0001F539 {name}, ID - {id}, \n'
-            all_objects_list += unpack_row
+        return rows
+
+
+async def represent_list_if_objects(rows: sqlite3.Row, message: types.Message) -> None:
+    all_objects_list = ''
+    for row in rows:
+        unpack_row = ''
+        id, name = tuple(row)
+        unpack_row = f'\U0001F539 {name}, ID: {id}\n'
+        all_objects_list += unpack_row
+    if all_objects_list == '':
+        await message.answer('Список объектов пуст!')
+    else:
         await message.answer(all_objects_list)
+
+
+async def get_list_of_devices() -> dict:
+    try:
+        objects = await get_list_of_objects()
+        all_objects_devices = {}
+        with conn_context(db_path) as conn:
+            curs = conn.cursor()
+            for object in objects:
+                row_device = await get_object_devices(object, curs)
+                temp_devices = []
+                for device in row_device:
+                    temp_devices.append(device)
+                if len(temp_devices) == 0:
+                    all_objects_devices[object['name']] = 'Нет устройств!'
+                else:
+                    all_objects_devices[object['name']] = temp_devices
+        return all_objects_devices
+    except KeyError:
+        logging.info("Object hasn't devices")
+
+
+async def represent_list_if_devices(
+    all_obj_dev: dict, message: types.Message
+) -> None:
+    all_devices_msg = ''
+    for object, devices in all_obj_dev.items():
+        all_devices_msg += f"\U0001F539 {object}\n"
+        if devices == 'Нет устройств!':
+            all_devices_msg += '\U00002796 Нет устройств!\n'
+        else:
+            for device in devices:
+                all_devices_msg += '\U00002796 '
+                all_devices_msg += f"ID: {device['ID']} NAME: {device['name']} IP: {device['ip']}"
+                all_devices_msg += '\n'
+    if all_devices_msg == '':
+        await message.answer('Список устройств пуст!')
+    else:
+        await message.answer(all_devices_msg)
+
+
+async def get_object_devices(
+    object: sqlite3.Row, curs: sqlite3.Cursor
+) -> list[sqlite3.Row]:
+    try:
+        curs.execute(f'''
+        SELECT id, name, ip, id_object
+        FROM devices
+        WHERE id_object='{object['id']}'
+        ''')
+        all_devices = curs.fetchall()
+        return all_devices
+    except KeyError:
+        logging.info("Object hasn't devices")
+
+
+async def del_obj(message: types.Message, args: str) -> None:
+    with conn_context(db_path) as conn:
+        curs = conn.cursor()
+        curs.execute('''PRAGMA foreign_keys=on;''')
+        curs.execute(f'''
+        DELETE
+        FROM objects
+        WHERE id='{args}';''')
+        conn.commit()
+        await message.reply('Объект удалён!')
+
+
+async def del_dev(message: types.Message, args: str) -> None:
+    with conn_context(db_path) as conn:
+        curs = conn.cursor()
+        curs.execute('''PRAGMA foreign_keys=on;''')
+        curs.execute(f'''
+        DELETE
+        FROM devices
+        WHERE id='{args}';''')
+        conn.commit()
+        await message.reply('Устройство удалёно!')
