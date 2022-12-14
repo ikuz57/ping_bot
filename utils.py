@@ -37,7 +37,6 @@ async def update_status(bot: Bot) -> None:
             all_objects = curs.fetchall()
             for object in all_objects:
                 all_devices = await get_object_devices(object, curs)
-                # if len(devices) != 0:
                 temp_object_devices = await status_check(
                     all_devices, bot, object)
                 TEMP_STATUS[object['name']] = temp_object_devices
@@ -158,58 +157,50 @@ async def add_to_fav(args: str, message: types.Message) -> None:
 
 async def show_status_detail(message: types.Message) -> None:
     id_chat = message.chat.id
-    with conn_context(db_path) as conn:
-        curs = conn.cursor()
-        curs.execute(f'''
-        SELECT o.name as name
-        FROM favorites as f
-        LEFT JOIN objects as o ON o.id = f.id_object
-        WHERE f.id_chat = {id_chat}''')
-        fav_objects = curs.fetchall()
+    fav_objects = await get_fav_object_from_db(id_chat)
     if len(fav_objects) == 0:
         await message.answer('Нет избранных объектов!')
     else:
         msg = ''
         for object in fav_objects:
             msg += '\U0001F539 ' + object['name'] + ':\n'
-            try:
-                for device in TEMP_STATUS[object['name']]:
-                    msg += '\U00002796 '
-                    msg += ' '.join(str(param) for param in device)
-                    msg += '\n'
-            except KeyError:
-                logging.info("Object hasn't devices")
+            for device in TEMP_STATUS[object['name']]:
+                msg += '\U00002796 '
+                msg += ' '.join(str(param) for param in device)
+                msg += '\n'
         await message.answer(msg)
 
 
 async def show_status(message: types.Message) -> None:
     id_chat = message.chat.id
+    msg = ''
+    status = ''
+    fav_objects = await get_fav_object_from_db(id_chat)
+    if len(fav_objects) == 0:
+        await message.answer('Нет избранных объектов!')
+    else:
+        for object in fav_objects:
+            msg += '\U0001F539 ' + object['name'] + ' '
+            for device in TEMP_STATUS[object['name']]:
+                if device[1] == '\U0001F7E9':
+                    status = '\U0001F7E9'
+                else:
+                    status = '\U0001F7E5'
+                    break
+            msg += status + '\n'
+        await message.answer(msg)
+
+
+async def get_fav_object_from_db(id_chat) -> list[sqlite3.Row]:
     with conn_context(db_path) as conn:
         curs = conn.cursor()
         curs.execute(f'''
         SELECT o.name as name
         FROM favorites as f
         LEFT JOIN objects as o ON o.id = f.id_object
-        WHERE f.id_chat = {id_chat}''')
+        WHERE f.id_chat = "{id_chat}";''')
         fav_objects = curs.fetchall()
-    msg = ''
-    status = ''
-    if len(fav_objects) == 0:
-        await message.answer('Нет избранных объектов!')
-    else:
-        for object in fav_objects:
-            try:
-                msg += '\U0001F539 ' + object['name'] + ' '
-                for device in TEMP_STATUS[object['name']]:
-                    if device[1] == '\U0001F7E9':
-                        status = '\U0001F7E9'
-                    else:
-                        status = '\U0001F7E5'
-                        break
-                msg += status + '\n'
-            except KeyError:
-                logging.info('')
-        await message.answer(msg)
+        return fav_objects
 
 
 async def add_remove_track(message: types.Message) -> None:
@@ -219,7 +210,7 @@ async def add_remove_track(message: types.Message) -> None:
         curs.execute(f'''
         SELECT id_chat, track
         FROM track
-        WHERE id_chat = {id_chat}''')
+        WHERE id_chat = "{id_chat}";''')
         chat_track = curs.fetchall()
         if len(chat_track) == 0:
             curs.execute(f'''
@@ -324,22 +315,36 @@ async def get_object_devices(
 async def del_obj(message: types.Message, args: str) -> None:
     with conn_context(db_path) as conn:
         curs = conn.cursor()
-        curs.execute('''PRAGMA foreign_keys=on;''')
-        curs.execute(f'''
-        DELETE
-        FROM objects
-        WHERE id='{args}';''')
-        conn.commit()
-        await message.reply('Объект удалён!')
+        if await chek_exist(args, 'objects', curs):
+            curs.execute('''PRAGMA foreign_keys=on;''')
+            curs.execute(f'''
+            DELETE
+            FROM objects
+            WHERE id='{args}';''')
+            conn.commit()
+            await message.reply('Объект удалён!')
+        else:
+            await message.reply('Некорректный ID!')
 
 
 async def del_dev(message: types.Message, args: str) -> None:
     with conn_context(db_path) as conn:
         curs = conn.cursor()
-        curs.execute('''PRAGMA foreign_keys=on;''')
-        curs.execute(f'''
-        DELETE
-        FROM devices
-        WHERE id='{args}';''')
-        conn.commit()
-        await message.reply('Устройство удалёно!')
+        if await chek_exist(args, 'devices', curs):
+            curs.execute('''PRAGMA foreign_keys=on;''')
+            curs.execute(f'''
+            DELETE
+            FROM devices
+            WHERE id='{args}';''')
+            conn.commit()
+            await message.reply('Устройство удалёно!')
+        else:
+            await message.reply('Некорректный ID!')
+
+
+async def chek_exist(args: str, table: str, curs: sqlite3.Cursor) -> bool:
+    curs.execute(f'''
+    EXIST(SELECT * FROM {table}) WHERE id='{args}') AS flag;''')
+    flag = curs.fetchone()['flag']
+    logging.info(f'{flag} - eto flag-------------------')
+    return flag

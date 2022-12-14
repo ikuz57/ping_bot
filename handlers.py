@@ -38,7 +38,7 @@ async def cmd_help(message: types.Message):
         '/show_obj - показать все объекты\n'
         '/show_dev - показать все устройства\n'
         '/del_obj - удалить обьект по ID\n'
-        '/del_device - удалить устройство по ID\n')
+        '/del_device - удалить устройство по ID\n', reply_markup=keyboard)
     logging.info(f'command /help for chat_id = {message.chat.id}')
 
 
